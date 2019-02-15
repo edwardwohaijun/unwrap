@@ -48,7 +48,7 @@ fn main() {
     }
 
     for file in args.skip(1) { // todo: check filename encoding?
-        let file_path = Path::new(&file); // todo: check whether it's a regular file, not directory.
+        let file_path = Path::new(&file); // todo: check whether it's a regular file, not a directory.
         if !file_path.exists() { // assume to be base64 string, it's better to check content are all valid b64 characters.
             if let Err(_e) = unwrap_base64(&file) {
                 continue;
@@ -58,9 +58,9 @@ fn main() {
         let wrapped_type: &str = &tree_magic::from_filepath(file_path);
         if let Some(unwrap) = unwrapper.get(wrapped_type) {
             let unwrap_to = &file_path.file_stem().unwrap().to_string_lossy(); // todo: check whether it's empty string
-            match create_dir(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
+            match create_dir3(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
                 Ok(unwrap_to) => {
-                    if let Err(e) = unwrap(file_path, std::path::Path::new(&unwrap_to)) {
+                    if let Err(e) = unwrap(file_path, std::path::Path::new(unwrap_to.as_ref())) {
                         println!("err unwrapping {:?}: {:?}", file_path, e);
                         continue;
                     }
@@ -132,7 +132,7 @@ fn unwrap_xz(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     io::copy(&mut f, &mut output_file)?;
 
     // todo: check whether the unwrapped is of type tar.
-
+    /// ///////////////////////////////////////////////////
     Ok(())
 }
 
@@ -148,7 +148,7 @@ fn unwrap_bzip(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     io::copy(&mut f, &mut output_file)?;
 
     // todo: check unzipped format, if tar, do untar
-
+    /// ////////////////////////////////////////////////////
     Ok(())
 }
 
@@ -159,6 +159,7 @@ fn unwrap_tar(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     // let mut archive;
     if &tree_magic::from_filepath(file_path) == "application/gzip" {
         gz = GzDecoder::new(file);
+        // what makes you think, after the gzipped file is a tar file?????
         let mut archive = Archive::new(gz);
         archive.unpack(unwrap_to)
     } else {
@@ -204,4 +205,52 @@ fn create_dir(path: &str) -> io::Result<String> { // after moving this fn into a
         },
         Err(e) => Err(e)
     }
+}
+
+/*
+fn create_dir2<'a>(path: &'a str) -> io::Result<Cow<'a, str>> {
+    if let Ok(_) = fs::create_dir(path) {
+        return Ok(path.into()) // same as Ok(Cow::Borrow(path))
+    }
+    // let mut new_path = path.to_string() + "_(1)";
+    let mut new_path: Cow<str>= Cow::Owned(path.to_string() + "_(1)");
+    while let Err(e) = fs::create_dir(&new_path.as_ref::<>()) {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            let digit_suffix = path_digi_suffix.captures(&new_path).unwrap(); // new_path definitely ends with "_(123)".
+            let suffix = digit_suffix.get(1).unwrap().as_str().parse::<i32>().unwrap() + 1; // todo: cautious of overflow(consider using wrap-around)
+            let new_suffix = format!("_({})", suffix);
+            // let new_path11 = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
+            new_path = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
+            continue
+        } else {
+            return Err(e)
+        }
+    }
+    Ok(new_path.into()) // same as Ok(Cow::Owned(new_path))
+}
+*/
+
+fn create_dir3(path: &str) -> io::Result<Cow<str>> {
+    if let Ok(_) = fs::create_dir(path) {
+        return Ok(path.into())
+    }
+    let mut new_path = path.to_string() + "_(1)";
+    // let mut new_path: Cow<str>= Cow::Owned(path.to_string() + "_(1)");
+    while let Err(e) = fs::create_dir(&new_path) {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            let tmp;
+            {
+                let digit_suffix = path_digi_suffix.captures(&new_path).unwrap(); // new_path definitely ends with "_(123)".
+                let suffix = digit_suffix.get(1).unwrap().as_str().parse::<i32>().unwrap() + 1; // todo: cautious of overflow(consider using wrap-around)
+                let new_suffix = format!("_({})", suffix);
+                // let new_path11 = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
+                tmp = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).into_owned(); // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
+            }
+            new_path = tmp;
+            continue
+        } else {
+            return Err(e)
+        }
+    }
+    Ok(new_path.into()) // same as Ok(Cow::Owned(new_path))
 }
