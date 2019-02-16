@@ -24,3 +24,8 @@ cargo build
 ./target/debug/unwrap file1.zip file2.rar file3.tar file4.tgz file5.bz2 file6.rar QXdlc29tZSBSdXN0
 ```
 Each file will be decompressed into a directory with the same name with extension stripped.
+The last string is a Base64 encoded, unwrapped to stdout: `"Awesome Rust"`.
+
+# Caveat
+* password-protected file are not supported
+* zip decompression performs poorly (refers to [https://github.com/mvdnes/zip-rs/issues/88](https://github.com/mvdnes/zip-rs/issues/88))  
