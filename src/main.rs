@@ -31,15 +31,31 @@ lazy_static! {
 }
 
 fn main() {
-    let mut unwrapper: HashMap<&str, Box<dyn Fn(&Path, &Path) -> io::Result<()>>> = HashMap::new(); // todo: use with_capacity(16);
-    unwrapper.insert("application/zip", Box::new(unwrap_zip));
-    //unwrapper.insert("application/x-7z-compressed", Box::new(unwrap_7z));
-    unwrapper.insert("application/x-xz", Box::new(unwrap_xz));
-    unwrapper.insert("application/x-tar", Box::new(unwrap_tar));
-    unwrapper.insert("application/gzip", Box::new(unwrap_tar));
-    unwrapper.insert("application/x-bzip", Box::new(unwrap_bzip));
-    unwrapper.insert("application/vnd.rar", Box::new(unwrap_rar));
-    unwrapper.insert("application/x-rar-compressed", Box::new(unwrap_rar));
+    enum wrapped_types {
+        Zip, Xz, Tar, Gzip, Bzip, Rar, Base64
+    }
+
+    fn unwrap<P: AsRef<Path>>(wrapped: &wrapped_types, file_path: P, unwrap_to: P) -> io::Result<()> {
+        match wrapped {
+            wrapped_types::Zip => unwrap_zip(file_path, unwrap_to),
+            wrapped_types::Xz => unwrap_xz(file_path, unwrap_to),
+            wrapped_types::Tar => unwrap_tar(file_path, unwrap_to),
+            wrapped_types::Gzip => unwrap_tar(file_path, unwrap_to),
+            wrapped_types::Bzip => unwrap_bzip(file_path, unwrap_to),
+            wrapped_types::Rar => unwrap_rar(file_path, unwrap_to),
+            wrapped_types::Base64 => unwrap_base64(file_path.as_ref().to_str().unwrap()),
+        }
+    }
+
+    let mut unwrapper2 = HashMap::new();
+    unwrapper2.insert("application/zip".to_string(), wrapped_types::Zip);
+    unwrapper2.insert("application/x-xz".to_string(), wrapped_types::Xz);
+    unwrapper2.insert("application/x-tar".to_string(), wrapped_types::Tar);
+    unwrapper2.insert("application/gzip".to_string(), wrapped_types::Tar);
+    unwrapper2.insert("application/x-bzip".to_string(), wrapped_types::Bzip);
+    unwrapper2.insert("application/vnd.rar".to_string(), wrapped_types::Rar);
+    unwrapper2.insert("application/x-rar-compressed".to_string(), wrapped_types::Rar);
+
 
     let args = env::args();
     if args.len() == 1 { // todo: showing a help msg
@@ -50,17 +66,19 @@ fn main() {
     for file in args.skip(1) { // todo: check filename encoding?
         let file_path = Path::new(&file); // todo: check whether it's a regular file, not a directory.
         if !file_path.exists() { // assume to be base64 string, it's better to check content are all valid b64 characters.
-            if let Err(_e) = unwrap_base64(&file) {
-                continue;
-            }
+            // unwrap_base64(&file).unwrap();
+            unwrap(&wrapped_types::Base64, file_path, file_path).unwrap();
+            continue
         }
 
-        let wrapped_type: &str = &tree_magic::from_filepath(file_path);
-        if let Some(unwrap) = unwrapper.get(wrapped_type) {
+        // let ref wrapped_type = tree_magic::from_filepath(file_path);
+        if let Some(wrapped_type) = unwrapper2.get(&tree_magic::from_filepath(file_path)) {
             let unwrap_to = &file_path.file_stem().unwrap().to_string_lossy(); // todo: check whether it's empty string
             match create_dir3(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
                 Ok(unwrap_to) => {
-                    if let Err(e) = unwrap(file_path, std::path::Path::new(unwrap_to.as_ref())) {
+                    let ff = unwrap_to.as_ref();
+                    let pth = Path::new(ff);
+                if let Err(e) = unwrap(wrapped_type,file_path, pth) {
                         println!("err unwrapping {:?}: {:?}", file_path, e);
                         continue;
                     }
@@ -71,20 +89,21 @@ fn main() {
                 }
             }
         } else { // check whether the passed is a regular file, not directory, symLink
-            println!("not supported type: {}", wrapped_type);
+            println!("not supported type: {}", 123);
             continue;
         }
     }
 }
 
-fn unwrap_zip(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
+// try to parse entry name in the correct encoding.
+fn unwrap_zip<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
     println!("unwrapping zip");
     let file = fs::File::open(file_path)?;
     let mut archive = zip::ZipArchive::new(file).unwrap(); // todo: check return value. If error, .....
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let outpath = unwrap_to.join(file.sanitized_name());
+        let outpath = unwrap_to.as_ref().join(file.sanitized_name());
 
         if (&*file.name()).ends_with('/') {
             println!("File {} extracted to \"{}\"", i, outpath.as_path().display());
@@ -115,19 +134,21 @@ fn unwrap_zip(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
 
 // not implemented yet
 /*
-fn unwrap_7z(_file_path: &Path, _unwrap_to: &Path) -> io::Result<()> {
+fn unwrap_7z<P>(file_path: P, unwrap_to: P) -> io::Result<()>
+    where P: AsRef<Path>
+{
     println!("unwrapping 7z: {:?}", _file_path);
     Ok(())
 }
 */
 
-fn unwrap_xz(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
-    println!("unwrapping xz: {:?}", file_path);
-    let file = fs::File::open(file_path)?;
+fn unwrap_xz<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+    println!("unwrapping xz: {:?}", file_path.as_ref());
+    let file = fs::File::open(file_path.as_ref())?;
     let mut f = LzmaReader::new_decompressor(file).unwrap();
 
-    let output_file_name = file_path.file_stem().unwrap();
-    let output_file_path = std::path::Path::new(unwrap_to).join(output_file_name);
+    let output_file_name = file_path.as_ref().file_stem().unwrap();
+    let output_file_path = unwrap_to.as_ref().join(output_file_name);
     let mut output_file = fs::File::create(output_file_path)?;
     io::copy(&mut f, &mut output_file)?;
 
@@ -136,14 +157,14 @@ fn unwrap_xz(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn unwrap_bzip(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
+fn unwrap_bzip<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
     println!("unwrapping bzip");
-    let file = fs::File::open(file_path)?;
+    let file = fs::File::open(file_path.as_ref())?;
     let mut f = BzDecoder::new(file);
 
-    println!("path stem: {:?}", file_path.file_stem().unwrap());
-    let output_file_name = file_path.file_stem().unwrap(); // todo: check output validity
-    let output_file_path = std::path::Path::new(unwrap_to).join(&output_file_name);
+    println!("path stem: {:?}", file_path.as_ref().file_stem().unwrap());
+    let output_file_name = file_path.as_ref().file_stem().unwrap(); // todo: check output validity
+    let output_file_path = unwrap_to.as_ref().join(&output_file_name);
     let mut output_file = fs::File::create(output_file_path)?;
     io::copy(&mut f, &mut output_file)?;
 
@@ -152,12 +173,12 @@ fn unwrap_bzip(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn unwrap_tar(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
+fn unwrap_tar<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
     println!("unwrapping tar");
-    let file = fs::File::open(file_path)?;
+    let file = fs::File::open(file_path.as_ref())?;
     let gz;
     // let mut archive;
-    if &tree_magic::from_filepath(file_path) == "application/gzip" {
+    if &tree_magic::from_filepath(file_path.as_ref()) == "application/gzip" {
         gz = GzDecoder::new(file);
         // what makes you think, after the gzipped file is a tar file?????
         let mut archive = Archive::new(gz);
@@ -168,9 +189,9 @@ fn unwrap_tar(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
     }
 }
 
-fn unwrap_rar(file_path: &Path, unwrap_to: &Path) -> io::Result<()> {
-    unrar::Archive::new(file_path.to_str().unwrap().into())
-        .extract_to(unwrap_to.to_str().unwrap().into())
+fn unwrap_rar<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+    unrar::Archive::new(file_path.as_ref().to_str().unwrap().to_owned())
+        .extract_to(unwrap_to.as_ref().to_str().unwrap().to_owned())
         .unwrap()
         .process()
         .unwrap();
@@ -208,25 +229,25 @@ fn create_dir(path: &str) -> io::Result<String> { // after moving this fn into a
 }
 
 /*
+// failed attempt
 fn create_dir2<'a>(path: &'a str) -> io::Result<Cow<'a, str>> {
     if let Ok(_) = fs::create_dir(path) {
-        return Ok(path.into()) // same as Ok(Cow::Borrow(path))
+        return Ok(path.into())
     }
     // let mut new_path = path.to_string() + "_(1)";
     let mut new_path: Cow<str>= Cow::Owned(path.to_string() + "_(1)");
     while let Err(e) = fs::create_dir(&new_path.as_ref::<>()) {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
-            let digit_suffix = path_digi_suffix.captures(&new_path).unwrap(); // new_path definitely ends with "_(123)".
-            let suffix = digit_suffix.get(1).unwrap().as_str().parse::<i32>().unwrap() + 1; // todo: cautious of overflow(consider using wrap-around)
+            let digit_suffix = path_digi_suffix.captures(&new_path).unwrap();
+            let suffix = digit_suffix.get(1).unwrap().as_str().parse::<i32>().unwrap() + 1;
             let new_suffix = format!("_({})", suffix);
-            // let new_path11 = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
             new_path = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
             continue
         } else {
             return Err(e)
         }
     }
-    Ok(new_path.into()) // same as Ok(Cow::Owned(new_path))
+    Ok(new_path.into())
 }
 */
 
@@ -240,11 +261,10 @@ fn create_dir3(path: &str) -> io::Result<Cow<str>> {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
             let tmp;
             {
-                let digit_suffix = path_digi_suffix.captures(&new_path).unwrap(); // new_path definitely ends with "_(123)".
+                let digit_suffix = path_digi_suffix.captures(&new_path).unwrap(); // this capture always match, new_path definitely ends with "_(\d+)".
                 let suffix = digit_suffix.get(1).unwrap().as_str().parse::<i32>().unwrap() + 1; // todo: cautious of overflow(consider using wrap-around)
                 let new_suffix = format!("_({})", suffix);
-                // let new_path11 = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).; // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
-                tmp = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).into_owned(); // old Cow get dropped, new Cow get allocated, still causing heap allocation :-(
+                tmp = path_digi_suffix.replace_all(&new_path, &new_suffix[..]).into_owned();
             }
             new_path = tmp;
             continue
