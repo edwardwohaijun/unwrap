@@ -8,6 +8,7 @@ extern crate bzip2;
 extern crate unrar;
 extern crate base64;
 extern crate regex;
+extern crate rand;
 
 use flate2::read::GzDecoder;
 use tar::Archive;
@@ -26,6 +27,10 @@ use std::fs;
 use std::process;
 use std::borrow::Cow;
 
+use std::iter;
+use rand::{Rng, thread_rng};
+use rand::distributions::Alphanumeric;
+
 lazy_static! {
     static ref path_digi_suffix: Regex = Regex::new(r"_\((\d+)\)$").unwrap(); // to match a directory name: this_is_a_directory_(123)
 }
@@ -40,21 +45,21 @@ fn main() {
             wrapped_types::Zip => unwrap_zip(file_path, unwrap_to),
             wrapped_types::Xz => unwrap_xz(file_path, unwrap_to),
             wrapped_types::Tar => unwrap_tar(file_path, unwrap_to),
-            wrapped_types::Gzip => unwrap_tar(file_path, unwrap_to),
+            wrapped_types::Gzip => unwrap_gzip(file_path, unwrap_to),
             wrapped_types::Bzip => unwrap_bzip(file_path, unwrap_to),
             wrapped_types::Rar => unwrap_rar(file_path, unwrap_to),
             wrapped_types::Base64 => unwrap_base64(file_path.as_ref().to_str().unwrap()),
         }
     }
 
-    let mut unwrapper2 = HashMap::new();
-    unwrapper2.insert("application/zip".to_string(), wrapped_types::Zip);
-    unwrapper2.insert("application/x-xz".to_string(), wrapped_types::Xz);
-    unwrapper2.insert("application/x-tar".to_string(), wrapped_types::Tar);
-    unwrapper2.insert("application/gzip".to_string(), wrapped_types::Tar);
-    unwrapper2.insert("application/x-bzip".to_string(), wrapped_types::Bzip);
-    unwrapper2.insert("application/vnd.rar".to_string(), wrapped_types::Rar);
-    unwrapper2.insert("application/x-rar-compressed".to_string(), wrapped_types::Rar);
+    let mut unwrapper = HashMap::new();
+    unwrapper.insert("application/zip".to_string(), wrapped_types::Zip);
+    unwrapper.insert("application/x-xz".to_string(), wrapped_types::Xz);
+    unwrapper.insert("application/x-tar".to_string(), wrapped_types::Tar);
+    unwrapper.insert("application/gzip".to_string(), wrapped_types::Gzip);
+    unwrapper.insert("application/x-bzip".to_string(), wrapped_types::Bzip);
+    unwrapper.insert("application/vnd.rar".to_string(), wrapped_types::Rar);
+    unwrapper.insert("application/x-rar-compressed".to_string(), wrapped_types::Rar);
 
 
     let args = env::args();
@@ -72,7 +77,7 @@ fn main() {
         }
 
         // let ref wrapped_type = tree_magic::from_filepath(file_path);
-        if let Some(wrapped_type) = unwrapper2.get(&tree_magic::from_filepath(file_path)) {
+        if let Some(wrapped_type) = unwrapper.get(&tree_magic::from_filepath(file_path)) {
             let unwrap_to = &file_path.file_stem().unwrap().to_string_lossy(); // todo: check whether it's empty string
             match create_dir3(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
                 Ok(unwrap_to) => {
@@ -96,7 +101,7 @@ fn main() {
 }
 
 // try to parse entry name in the correct encoding.
-fn unwrap_zip<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+fn unwrap_zip<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
     println!("unwrapping zip");
     let file = fs::File::open(file_path)?;
     let mut archive = zip::ZipArchive::new(file).unwrap(); // todo: check return value. If error, .....
@@ -142,54 +147,87 @@ fn unwrap_7z<P>(file_path: P, unwrap_to: P) -> io::Result<()>
 }
 */
 
-fn unwrap_xz<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+// called inside unwrap_xz/bzip/gzip() if decompressed file is a tar
+fn untar<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
+    if let "application/x-tar" = tree_magic::from_filepath(file_path.as_ref()).as_ref() {
+        println!("tar found");
+        let mut rng = thread_rng();
+        let random_filename: String = iter::repeat(())
+            .map(|()| rng.sample(Alphanumeric))
+            .take(8)
+            .collect();
+        let new_file_path = file_path.as_ref().parent().unwrap().to_path_buf().join(random_filename);
+        fs::rename(&file_path, &new_file_path)?;
+        println!("renaming {:?} to {:?}", file_path.as_ref(), &new_file_path);
+        unwrap_tar(&new_file_path, unwrap_to)?;
+        fs::remove_file(&new_file_path)?;
+    }
+    Ok(())
+}
+
+fn unwrap_xz<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
     println!("unwrapping xz: {:?}", file_path.as_ref());
     let file = fs::File::open(file_path.as_ref())?;
     let mut f = LzmaReader::new_decompressor(file).unwrap();
 
     let output_file_name = file_path.as_ref().file_stem().unwrap();
     let output_file_path = unwrap_to.as_ref().join(output_file_name);
-    let mut output_file = fs::File::create(output_file_path)?;
+    let mut output_file = fs::File::create(&output_file_path)?;
     io::copy(&mut f, &mut output_file)?;
 
-    // todo: check whether the unwrapped is of type tar.
-    /// ///////////////////////////////////////////////////
+    if let "application/x-tar" = tree_magic::from_filepath(&output_file_path).as_ref() {
+        println!("tar found");
+        return untar(output_file_path, unwrap_to)
+    }
     Ok(())
 }
 
-fn unwrap_bzip<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+fn unwrap_bzip<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
     println!("unwrapping bzip");
     let file = fs::File::open(file_path.as_ref())?;
-    let mut f = BzDecoder::new(file);
 
     println!("path stem: {:?}", file_path.as_ref().file_stem().unwrap());
     let output_file_name = file_path.as_ref().file_stem().unwrap(); // todo: check output validity
     let output_file_path = unwrap_to.as_ref().join(&output_file_name);
-    let mut output_file = fs::File::create(output_file_path)?;
+    let mut output_file = fs::File::create(&output_file_path)?;
+
+    let mut f = BzDecoder::new(file);
     io::copy(&mut f, &mut output_file)?;
 
-    // todo: check unzipped format, if tar, do untar
-    /// ////////////////////////////////////////////////////
+    if let "application/x-tar" = tree_magic::from_filepath(&output_file_path).as_ref() {
+        println!("tar found");
+        return untar(output_file_path, unwrap_to)
+    }
     Ok(())
 }
 
-fn unwrap_tar<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
-    println!("unwrapping tar");
+fn unwrap_gzip<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
+    println!("unwrapping bzip");
     let file = fs::File::open(file_path.as_ref())?;
-    let gz;
-    // let mut archive;
-    if &tree_magic::from_filepath(file_path.as_ref()) == "application/gzip" {
-        gz = GzDecoder::new(file);
-        // what makes you think, after the gzipped file is a tar file?????
-        let mut archive = Archive::new(gz);
-        archive.unpack(unwrap_to)
-    } else {
-        let mut archive = Archive::new(file);
-        archive.unpack(unwrap_to)
+
+    println!("path stem: {:?}", file_path.as_ref().file_stem().unwrap());
+    let output_file_name = file_path.as_ref().file_stem().unwrap(); // todo: check output validity
+    let output_file_path = unwrap_to.as_ref().join(&output_file_name);
+    let mut output_file = fs::File::create(&output_file_path)?;
+
+    let mut f = GzDecoder::new(file);
+    io::copy(&mut f, &mut output_file)?;
+
+    if let "application/x-tar" = tree_magic::from_filepath(&output_file_path).as_ref() {
+        println!("tar found");
+        return untar(output_file_path, unwrap_to)
     }
+    Ok(())
 }
 
-fn unwrap_rar<P: AsRef<Path>>(file_path: P, unwrap_to: P) -> io::Result<()> {
+fn unwrap_tar<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
+    println!("unwrapping tar: {:?} file into: {:?}", file_path.as_ref(), unwrap_to.as_ref());
+    let file = fs::File::open(file_path.as_ref())?;
+    let mut archive = Archive::new(file);
+    archive.unpack(unwrap_to)
+}
+
+fn unwrap_rar<P: AsRef<Path>, Q: AsRef<Path>>(file_path: P, unwrap_to: Q) -> io::Result<()> {
     unrar::Archive::new(file_path.as_ref().to_str().unwrap().to_owned())
         .extract_to(unwrap_to.as_ref().to_str().unwrap().to_owned())
         .unwrap()
