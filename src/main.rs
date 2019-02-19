@@ -53,13 +53,13 @@ fn main() {
     }
 
     let mut unwrapper = HashMap::new();
-    unwrapper.insert("application/zip".to_string(), wrapped_types::Zip);
-    unwrapper.insert("application/x-xz".to_string(), wrapped_types::Xz);
-    unwrapper.insert("application/x-tar".to_string(), wrapped_types::Tar);
-    unwrapper.insert("application/gzip".to_string(), wrapped_types::Gzip);
-    unwrapper.insert("application/x-bzip".to_string(), wrapped_types::Bzip);
-    unwrapper.insert("application/vnd.rar".to_string(), wrapped_types::Rar);
-    unwrapper.insert("application/x-rar-compressed".to_string(), wrapped_types::Rar);
+    unwrapper.insert("application/zip", wrapped_types::Zip);
+    unwrapper.insert("application/x-xz", wrapped_types::Xz);
+    unwrapper.insert("application/x-tar", wrapped_types::Tar);
+    unwrapper.insert("application/gzip", wrapped_types::Gzip);
+    unwrapper.insert("application/x-bzip", wrapped_types::Bzip);
+    unwrapper.insert("application/vnd.rar", wrapped_types::Rar);
+    unwrapper.insert("application/x-rar-compressed", wrapped_types::Rar);
 
 
     let args = env::args();
@@ -77,7 +77,7 @@ fn main() {
         }
 
         // let ref wrapped_type = tree_magic::from_filepath(file_path);
-        if let Some(wrapped_type) = unwrapper.get(&tree_magic::from_filepath(file_path)) {
+        if let Some(wrapped_type) = unwrapper.get(&tree_magic::from_filepath(file_path).as_ref()) {
             let unwrap_to = &file_path.file_stem().unwrap().to_string_lossy(); // todo: check whether it's empty string
             match create_dir3(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
                 Ok(unwrap_to) => {
