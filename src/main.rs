@@ -35,32 +35,33 @@ lazy_static! {
     static ref path_digi_suffix: Regex = Regex::new(r"_\((\d+)\)$").unwrap(); // to match a directory name: this_is_a_directory_(123)
 }
 
-fn main() {
-    enum wrapped_types {
-        Zip, Xz, Tar, Gzip, Bzip, Rar, Base64
-    }
+#[derive(Debug)]
+enum WrappedTypes {
+    Zip, Xz, Tar, Gzip, Bzip, Rar, Base64
+}
 
-    fn unwrap<P: AsRef<Path>>(wrapped: &wrapped_types, file_path: P, unwrap_to: P) -> io::Result<()> {
+fn main() {
+    use WrappedTypes::*;
+    fn unwrap<P: AsRef<Path>>(wrapped: &WrappedTypes, file_path: P, unwrap_to: P) -> io::Result<()> {
         match wrapped {
-            wrapped_types::Zip => unwrap_zip(file_path, unwrap_to),
-            wrapped_types::Xz => unwrap_xz(file_path, unwrap_to),
-            wrapped_types::Tar => unwrap_tar(file_path, unwrap_to),
-            wrapped_types::Gzip => unwrap_gzip(file_path, unwrap_to),
-            wrapped_types::Bzip => unwrap_bzip(file_path, unwrap_to),
-            wrapped_types::Rar => unwrap_rar(file_path, unwrap_to),
-            wrapped_types::Base64 => unwrap_base64(file_path.as_ref().to_str().unwrap()),
+            Zip => unwrap_zip(file_path, unwrap_to),
+            Xz => unwrap_xz(file_path, unwrap_to),
+            Tar => unwrap_tar(file_path, unwrap_to),
+            Gzip => unwrap_gzip(file_path, unwrap_to),
+            Bzip => unwrap_bzip(file_path, unwrap_to),
+            Rar => unwrap_rar(file_path, unwrap_to),
+            Base64 => unwrap_base64(file_path.as_ref().to_str().unwrap()),
         }
     }
 
     let mut unwrapper = HashMap::new();
-    unwrapper.insert("application/zip", wrapped_types::Zip);
-    unwrapper.insert("application/x-xz", wrapped_types::Xz);
-    unwrapper.insert("application/x-tar", wrapped_types::Tar);
-    unwrapper.insert("application/gzip", wrapped_types::Gzip);
-    unwrapper.insert("application/x-bzip", wrapped_types::Bzip);
-    unwrapper.insert("application/vnd.rar", wrapped_types::Rar);
-    unwrapper.insert("application/x-rar-compressed", wrapped_types::Rar);
-
+    unwrapper.insert("application/zip", Zip);
+    unwrapper.insert("application/x-xz", Xz);
+    unwrapper.insert("application/x-tar", Tar);
+    unwrapper.insert("application/gzip", Gzip);
+    unwrapper.insert("application/x-bzip", Bzip);
+    unwrapper.insert("application/vnd.rar", Rar);
+    unwrapper.insert("application/x-rar-compressed", Rar);
 
     let args = env::args();
     if args.len() == 1 { // todo: showing a help msg
@@ -72,12 +73,12 @@ fn main() {
         let file_path = Path::new(&file); // todo: check whether it's a regular file, not a directory.
         if !file_path.exists() { // assume to be base64 string, it's better to check content are all valid b64 characters.
             // unwrap_base64(&file).unwrap();
-            unwrap(&wrapped_types::Base64, file_path, file_path).unwrap();
+            unwrap(&Base64, file_path, file_path).unwrap();
             continue
         }
 
         // let ref wrapped_type = tree_magic::from_filepath(file_path);
-        if let Some(wrapped_type) = unwrapper.get(&tree_magic::from_filepath(file_path).as_ref()) {
+        if let Some(wrapped_type) = unwrapper.get(&tree_magic::from_filepath(file_path) as &str) {
             let unwrap_to = &file_path.file_stem().unwrap().to_string_lossy(); // todo: check whether it's empty string
             match create_dir3(unwrap_to) { // running create_dir("abc") might return Ok("abc_(1)"), because "abc/" already exists.
                 Ok(unwrap_to) => {
